@@ -1,0 +1,67 @@
+name: CI/CD - Build & Deploy
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  DOCKERHUB_REPO_BACKEND: YOUR_DOCKERHUB_USERNAME/dd-task-backend
+  DOCKERHUB_REPO_FRONTEND: YOUR_DOCKERHUB_USERNAME/dd-task-frontend
+  COMPOSE_PROJECT_NAME: ddtask
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.DOCKERHUB_REPO_BACKEND }}:latest
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.DOCKERHUB_REPO_FRONTEND }}:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait a few seconds for images to become available
+        run: sleep 5
+
+      - name: Deploy on remote server via SSH
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_SSH_PORT || 22 }}
+          script: |
+            cd ~/ddtask || mkdir -p ~/ddtask && cd ~/ddtask
+            if [ -d .git ]; then
+              git pull origin main || true
+            else
+              git clone https://github.com/${{ github.repository }} . || true
+            fi
+            docker compose pull
+            docker compose up -d --remove-orphans
